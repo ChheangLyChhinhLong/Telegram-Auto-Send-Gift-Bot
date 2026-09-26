@@ -13,15 +13,17 @@ from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
-    CallbackQueryHandler,
-    MessageHandler,
-    filters
+    CallbackQueryHandler
 )
 from telegram.error import TelegramError
 
 # --- CONFIGURATION (Environment Variables) ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
+
+# កំណត់ Support Admin ច្រើននាក់ (បំបែកដោយសញ្ញាក្បៀស , )
+raw_admin_ids = os.getenv("ADMIN_ID", "0")
+ADMIN_IDS = [int(aid.strip()) for aid in raw_admin_ids.split(",") if aid.strip().isdigit()]
+
 REQUIRED_CHANNEL = os.getenv("REQUIRED_CHANNEL", "@your_channel")
 DATABASE_URL = os.getenv("DATABASE_URL")
 PORT = int(os.getenv("PORT", 8080))
@@ -40,6 +42,9 @@ def get_db_connection():
 
 def release_db_connection(conn):
     db_pool.putconn(conn)
+
+def is_admin(user_id: int) -> bool:
+    return user_id in ADMIN_IDS
 
 # --- DUMMY WEB SERVER FOR UPTIMEROBOT ---
 app = Flask('')
@@ -141,7 +146,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cursor.close()
     release_db_connection(conn)
 
-    if user.id == ADMIN_ID:
+    if is_admin(user.id):
         await update.message.reply_text(
             f"👑 **សួស្តីលោក Admin ({user.first_name})!**\n\nសូមជ្រើសរើស Menu គ្រប់គ្រងខាងក្រោម៖",
             parse_mode="Markdown",
@@ -194,7 +199,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     await query.answer()
     data = query.data
 
-    if query.from_user.id != ADMIN_ID:
+    if not is_admin(query.from_user.id):
         await query.answer("⛔ អ្នកមិនមានសិទ្ធិប្រើប្រាស់ Menu នេះទេ!", show_alert=True)
         return
 
@@ -257,7 +262,7 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
 # --- ADMIN COMMAND FUNCTIONS ---
 async def add_gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     if not context.args:
@@ -275,7 +280,7 @@ async def add_gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ បានបន្ថែម Gift ចូលក្នុង System រួចរាល់!", reply_markup=get_admin_keyboard())
 
 async def set_draw_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     if not context.args or len(context.args) < 2:
@@ -317,7 +322,7 @@ async def set_draw_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ ទម្រង់កាលបរិច្ឆេទ ឬម៉ោងមិនត្រឹមត្រូវ (YYYY-MM-DD HH:MM)!")
 
 async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
+    if not is_admin(update.effective_user.id):
         return
 
     msg_text = " ".join(context.args)
@@ -386,7 +391,7 @@ async def trigger_draw(context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 cursor.execute("UPDATE gifts SET is_claimed = 1, claimed_by = %s WHERE id = %s;", (u_id, gift_id))
-                cursor.execute("INSERT INTO winners (user_id, gift_content) VALUES (%s, %s);", (u_id, gift_content))
+                cursor.execute("INSERT INTO winners (user_id, gift_content) VALUES (%s, %s);", (u_id, gift_id))
                 
                 user_display = f"@{u_name}" if u_name else u_fname
                 winners_list.append(user_display)
@@ -414,7 +419,7 @@ def main():
 
     app_bot = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Handlers
+    # Command Handlers
     app_bot.add_handler(CommandHandler("start", start))
     app_bot.add_handler(CommandHandler("addgift", add_gift))
     app_bot.add_handler(CommandHandler("broadcast", broadcast))
@@ -424,7 +429,7 @@ def main():
     app_bot.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
     app_bot.add_handler(CallbackQueryHandler(user_callback_handler))
 
-    print("Bot is running with Inline Dashboard Buttons...")
+    print("Bot is running with Multi-Admin & Inline Dashboard...")
     app_bot.run_polling()
 
 if __name__ == "__main__":
