@@ -20,7 +20,7 @@ from telegram.error import TelegramError
 # --- CONFIGURATION (Environment Variables) ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# កំណត់ Support Admin ច្រើននាក់ (បំបែកដោយសញ្ញាក្បៀស , )
+# Support Admin ច្រើននាក់ (បំបែកដោយសញ្ញាក្បៀស , )
 raw_admin_ids = os.getenv("ADMIN_ID", "0")
 ADMIN_IDS = [int(aid.strip()) for aid in raw_admin_ids.split(",") if aid.strip().isdigit()]
 
@@ -51,7 +51,7 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot is alive and running with PostgreSQL!"
+    return "Bot is alive and running with Multi-Admin Separate Stocks!"
 
 def run_flask():
     app.run(host='0.0.0.0', port=PORT)
@@ -69,9 +69,11 @@ def init_db():
         );
     ''')
     
+    # បន្ថែម admin_id ទៅក្នុង gifts ដើម្បីចំណាំថាជា Stock របស់ Admin ណា
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS gifts (
             id SERIAL PRIMARY KEY,
+            admin_id BIGINT NOT NULL,
             gift_content TEXT NOT NULL,
             is_claimed INT DEFAULT 0,
             claimed_by BIGINT DEFAULT NULL
@@ -82,6 +84,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS winners (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
+            admin_id BIGINT,
             gift_content TEXT,
             won_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
@@ -105,11 +108,11 @@ def get_admin_keyboard():
     keyboard = [
         [
             InlineKeyboardButton("➕ បន្ថែម Gift", callback_data="admin_addgift_hint"),
-            InlineKeyboardButton("📦 ពិនិត្យ Stock", callback_data="admin_stock")
+            InlineKeyboardButton("📦 ពិនិត្យ Stock ខ្ញុំ", callback_data="admin_stock")
         ],
         [
-            InlineKeyboardButton("🎲 ចាប់រង្វាន់ភ្លាមៗ (Draw)", callback_data="admin_draw_now"),
-            InlineKeyboardButton("⏰ Set ម៉ោងរត់", callback_data="admin_set_time_hint")
+            InlineKeyboardButton("🎲 ចាប់រង្វាន់ Stock ខ្ញុំភ្លាមៗ", callback_data="admin_draw_now"),
+            InlineKeyboardButton("⏰ Set ម៉ោងរត់ Stock ខ្ញុំ", callback_data="admin_set_time_hint")
         ],
         [
             InlineKeyboardButton("📢 Broadcast សារ", callback_data="admin_broadcast_hint"),
@@ -148,7 +151,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if is_admin(user.id):
         await update.message.reply_text(
-            f"👑 **សួស្តីលោក Admin ({user.first_name})!**\n\nសូមជ្រើសរើស Menu គ្រប់គ្រងខាងក្រោម៖",
+            f"👑 **សួស្តីលោក Admin ({user.first_name})!**\n\n"
+            f"🆔 Admin ID: `{user.id}`\n"
+            f"សូមជ្រើសរើស Menu គ្រប់គ្រង Stock ផ្ទាល់ខ្លួនខាងក្រោម៖",
             parse_mode="Markdown",
             reply_markup=get_admin_keyboard()
         )
@@ -198,33 +203,36 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
     query = update.callback_query
     await query.answer()
     data = query.data
+    admin_id = query.from_user.id
 
-    if not is_admin(query.from_user.id):
+    if not is_admin(admin_id):
         await query.answer("⛔ អ្នកមិនមានសិទ្ធិប្រើប្រាស់ Menu នេះទេ!", show_alert=True)
         return
 
     if data == "admin_stock":
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute("SELECT COUNT(*) FROM gifts WHERE is_claimed = 0;")
+        # រាប់តែ Stock របស់ Admin មួយហ្នឹងប៉ុណ្ណោះ
+        cursor.execute("SELECT COUNT(*) FROM gifts WHERE is_claimed = 0 AND admin_id = %s;", (admin_id,))
         count = cursor.fetchone()[0]
         cursor.close()
         release_db_connection(conn)
         
         await query.edit_message_text(
-            f"📦 **របាយការណ៍ស្តុក:**\n\nចំនួន Gift ដែលនៅសល់ក្នុង Stock: `{count}` 🎁",
+            f"📦 **របាយការណ៍ស្តុករបស់អ្នក (ID: `{admin_id}`):**\n\n"
+            f"ចំនួន Gift ដែលនៅសល់ក្នុង Stock របស់អ្នក: `{count}` 🎁",
             parse_mode="Markdown",
             reply_markup=get_admin_keyboard()
         )
 
     elif data == "admin_draw_now":
-        await query.edit_message_text("⏳ កំពុងដំណើរការ Random ចាប់រង្វាន់...")
-        await trigger_draw(context)
-        await query.message.reply_text("✅ ការចាប់រង្វាន់ និងផ្ញើកាដូបានបញ្ចប់!", reply_markup=get_admin_keyboard())
+        await query.edit_message_text("⏳ កំពុងដំណើរការ Random ចាប់រង្វាន់ពី Stock របស់អ្នក...")
+        await trigger_draw(context, admin_id=admin_id)
+        await query.message.reply_text("✅ ការចាប់រង្វាន់ Stock របស់អ្នកបានបញ្ចប់!", reply_markup=get_admin_keyboard())
 
     elif data == "admin_addgift_hint":
         await query.edit_message_text(
-            "➕ **របៀបបន្ថែម Gift:**\n\n"
+            "➕ **របៀបបន្ថែម Gift ចូល Stock របស់អ្នក:**\n\n"
             "សូមវាយ Command តាមទម្រង់៖\n"
             "`/addgift example@gmail.com:pass123`",
             parse_mode="Markdown",
@@ -233,10 +241,10 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
 
     elif data == "admin_set_time_hint":
         await query.edit_message_text(
-            "⏰ **របៀប Set ម៉ោងចាប់រង្វាន់ (One-time):**\n\n"
+            "⏰ **របៀប Set ម៉ោងចាប់រង្វាន់ (Stock របស់អ្នក):**\n\n"
             "សូមវាយ Command តាមទម្រង់៖\n"
             "`/set YYYY-MM-DD HH:MM`\n\n"
-            "ឧទាហរណ៍៖ `/set 2026-09-27 20:30` (ចាប់រង្វាន់ថ្ងៃទី 27 ខែកញ្ញា ម៉ោង 8:30 យប់)",
+            "ឧទាហរណ៍៖ `/set 2026-09-27 20:30`",
             parse_mode="Markdown",
             reply_markup=get_admin_keyboard()
         )
@@ -251,18 +259,20 @@ async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_T
         )
 
     elif data == "admin_cancel_time":
-        current_jobs = context.job_queue.get_jobs_by_name("scheduled_draw")
+        job_name = f"scheduled_draw_{admin_id}"
+        current_jobs = context.job_queue.get_jobs_by_name(job_name)
         if not current_jobs:
-            await query.edit_message_text("⚠️ មិនមានការកំណត់ Time ចាប់រង្វាន់ដែលកំពុងរង់ចាំនោះទេ។", reply_markup=get_admin_keyboard())
+            await query.edit_message_text("⚠️ អ្នកមិនមានការកំណត់ Time ចាប់រង្វាន់ដែលកំពុងរង់ចាំនោះទេ។", reply_markup=get_admin_keyboard())
             return
 
         for job in current_jobs:
             job.schedule_removal()
-        await query.edit_message_text("🗑️ បានលុបការកំណត់ Time ចាប់រង្វាន់ស្វ័យប្រវត្តិចោលរួចរាល់!", reply_markup=get_admin_keyboard())
+        await query.edit_message_text("🗑️ បានលុបការកំណត់ Time ចាប់រង្វាន់របស់អ្នករួចរាល់!", reply_markup=get_admin_keyboard())
 
 # --- ADMIN COMMAND FUNCTIONS ---
 async def add_gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+    admin_id = update.effective_user.id
+    if not is_admin(admin_id):
         return
 
     if not context.args:
@@ -272,15 +282,17 @@ async def add_gift(update: Update, context: ContextTypes.DEFAULT_TYPE):
     gift_content = " ".join(context.args)
     conn = get_db_connection()
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO gifts (gift_content) VALUES (%s);", (gift_content,))
+    # រក្សាទុក Gift ភ្ជាប់ជាមួយ admin_id របស់អ្នកដែលបន្ថែម
+    cursor.execute("INSERT INTO gifts (admin_id, gift_content) VALUES (%s, %s);", (admin_id, gift_content))
     conn.commit()
     cursor.close()
     release_db_connection(conn)
 
-    await update.message.reply_text("✅ បានបន្ថែម Gift ចូលក្នុង System រួចរាល់!", reply_markup=get_admin_keyboard())
+    await update.message.reply_text("✅ បានបន្ថែម Gift ចូលក្នុង Stock របស់អ្នករួចរាល់!", reply_markup=get_admin_keyboard())
 
 async def set_draw_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.effective_user.id):
+    admin_id = update.effective_user.id
+    if not is_admin(admin_id):
         return
 
     if not context.args or len(context.args) < 2:
@@ -304,17 +316,25 @@ async def set_draw_time(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ ម៉ោងដែលបានកំណត់គឺនៅក្នុងអតីតកាល! សូមជ្រើសរើសម៉ោងនៅពេលអនាគត។")
             return
 
-        current_jobs = context.job_queue.get_jobs_by_name("scheduled_draw")
+        # បង្កើត Job Name ផ្សេងគ្នាសម្រាប់ Admin ម្នាក់ៗ
+        job_name = f"scheduled_draw_{admin_id}"
+        current_jobs = context.job_queue.get_jobs_by_name(job_name)
         for job in current_jobs:
             job.schedule_removal()
 
-        context.job_queue.run_once(trigger_draw, when=scheduled_dt, name="scheduled_draw")
+        # បញ្ជូន admin_id ចូលទៅក្នុង Job Data
+        context.job_queue.run_once(
+            trigger_draw_job, 
+            when=scheduled_dt, 
+            name=job_name,
+            data={'admin_id': admin_id}
+        )
 
         formatted_time = scheduled_dt.strftime("%d-%m-%Y ម៉ោង %H:%M")
         await update.message.reply_text(
-            f"✅ **កំណត់ម៉ោងចាប់រង្វាន់ជោគជ័យ!**\n\n"
+            f"✅ **កំណត់ម៉ោងចាប់រង្វាន់សម្រាប់ Stock របស់អ្នកជោគជ័យ!**\n\n"
             f"📅 ថ្ងៃ និងម៉ោងត្រូវរត់៖ `{formatted_time}` ( Asia/Phnom_Penh )\n"
-            f"💡 Bot នឹងចាប់រង្វាន់ស្វ័យប្រវត្តិតែមួយលើកនេះប៉ុណ្ណោះ។",
+            f"💡 Bot នឹងចាប់រង្វាន់ចេញពី Stock របស់អ្នកតែមួយលើកនេះប៉ុណ្ណោះ។",
             parse_mode="Markdown",
             reply_markup=get_admin_keyboard()
         )
@@ -347,12 +367,18 @@ async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(f"✅ Broadcast រួចរាល់:\n- ជោគជ័យ: {success}\n- បរាជ័យ: {failed}", reply_markup=get_admin_keyboard())
 
-# --- AUTO DRAW ENGINE ---
-async def trigger_draw(context: ContextTypes.DEFAULT_TYPE):
+# --- AUTO DRAW ENGINE (SEPARATE BY ADMIN) ---
+async def trigger_draw_job(context: ContextTypes.DEFAULT_TYPE):
+    job = context.job
+    admin_id = job.data.get('admin_id')
+    await trigger_draw(context, admin_id=admin_id)
+
+async def trigger_draw(context: ContextTypes.DEFAULT_TYPE, admin_id: int):
     conn = get_db_connection()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT id, gift_content FROM gifts WHERE is_claimed = 0;")
+    # ទាញយកតែ Gift របស់ Admin មួយហ្នឹងប៉ុណ្ណោះ
+    cursor.execute("SELECT id, gift_content FROM gifts WHERE is_claimed = 0 AND admin_id = %s;", (admin_id,))
     available_gifts = cursor.fetchall()
 
     if not available_gifts:
@@ -391,7 +417,7 @@ async def trigger_draw(context: ContextTypes.DEFAULT_TYPE):
                 )
                 
                 cursor.execute("UPDATE gifts SET is_claimed = 1, claimed_by = %s WHERE id = %s;", (u_id, gift_id))
-                cursor.execute("INSERT INTO winners (user_id, gift_content) VALUES (%s, %s);", (u_id, gift_id))
+                cursor.execute("INSERT INTO winners (user_id, admin_id, gift_content) VALUES (%s, %s, %s);", (u_id, admin_id, gift_content))
                 
                 user_display = f"@{u_name}" if u_name else u_fname
                 winners_list.append(user_display)
@@ -429,7 +455,7 @@ def main():
     app_bot.add_handler(CallbackQueryHandler(admin_callback_handler, pattern="^admin_"))
     app_bot.add_handler(CallbackQueryHandler(user_callback_handler))
 
-    print("Bot is running with Multi-Admin & Inline Dashboard...")
+    print("Bot is running with Separate Admin Stocks...")
     app_bot.run_polling()
 
 if __name__ == "__main__":
